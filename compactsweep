@@ -1,0 +1,84 @@
+#!/bin/bash  
+
+trap ctrl_c INT
+ctrl_c() { 
+    echo " ABORT! CTRL+C entered..." 
+    clear
+    exit 
+}
+
+! [[ -d "$HOME/tmp" ]] && "creating temp directory to store log files at ~/tmp" && mkdir -vp "$HOME/tmp"
+
+target="/tmp/sortfile.XXX"
+orgfile="$(mktemp "$target")" 
+nullfile="$HOME/tmp/deadhosts" 
+
+# Function to validate and clean the network input
+validate_network() {
+    local input="$1"
+    # Remove trailing dots
+    cleaned_network=$(echo "$input" | sed -E 's/\.*$//')
+
+    # Check if the cleaned input is a valid Class C subnet (IPv4 format)
+    if [[ "$cleaned_network" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        # Split into octets and check length
+        IFS='.' read -r -a octets <<< "$cleaned_network"
+        if [[ ${#octets[@]} -eq 3 ]] && [[ ! "${octets[0]}" -gt 255 ]] && [[ ! "${octets[1]}" -gt 255 ]] && [[ ! "${octets[2]}" -ge 256 ]]; then
+            echo "$cleaned_network" # Return the cleaned and valid network ID
+        fi
+    fi
+}
+
+# Main loop for input validation
+while : 
+do
+    read -e -r -p "Please enter a valid class C network ID
+Ex: 192.168.1: " networkid
+    valid_network=$(validate_network "$networkid")
+    if [[ -n "$valid_network" ]]; then  
+        break # Valid input, exit the loop
+    else 
+        echo "Error! Invalid input - try again." # Notify user of invalid input
+    fi  
+done
+
+echo "Validated Network ID: $valid_network"
+
+# Refresh failure log
+echo "refreshing log file" && true > "$nullfile" 
+
+# Ping hosts in the specified range
+for addr in $(seq 254) 
+do
+    if [[ "$addr" -ne 254 ]]; then 
+        # Fail
+        nohup ping -c1 -W1 "$valid_network.$addr" >/dev/null 2>&1 || echo "$valid_network.$addr" >> "$nullfile"  & 
+        # Success DON'T TOUCH 
+        nohup ping -c1 -W1 "$valid_network.$addr" 2>&1 | grep from | tee -a "$orgfile" & 
+    else 
+        ping -c1 -W1 "$valid_network.$addr" >/dev/null 2>&1 || echo "$valid_network.$addr" >> "$nullfile"  
+        # Success DON'T TOUCH 
+        nohup ping -c1 -W1 "$valid_network.$addr" 2>&1 | grep from | tee -a "$orgfile" & 
+    fi
+done
+
+echo "cleaning up terminal output..." 
+sleep 1s 
+clear
+wait 
+
+# Function to sort the output
+sortproc() { 
+    sort -n -t . -k 3,3 -k 4,4 "$1"
+}
+
+# Output final results
+date >> "$nullfile"
+date | tee -a "$orgfile"
+
+echo "========> Unresponsive hosts <========" 
+sortproc "$nullfile" | uniq 
+
+echo "========> Responsive hosts <========" 
+sortproc "$orgfile"
+
