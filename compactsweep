@@ -1,25 +1,28 @@
 #!/bin/bash  
 
-trap ctrl_c INT
-ctrl_c() { 
-    echo " ABORT! CTRL+C entered..." 
-    clear
-    exit 
-}
+source logloc #can remove
 
-! [[ -d "$HOME/tmp" ]] && "creating temp directory to store log files at ~/tmp" && mkdir -vp "$HOME/tmp"
+#NOTE: this is an optional log file and this code won't work without logloc being in your ~/bin
+#for those using this script publicly - contact me and I will help you clean it up as some of this code is 
+#custom tailored for my own environment. All of my scripts use logloc as it corresponds to my log file function ... 
+
+SECONDS=0
+
+trap ctrl_c INT
+ctrl_c() { echo -e  "\nABORT! CTRL+C entered..."; exit; }
+
+! [[ -d "$HOME/tmp" ]] && "creating temp directory to store log files at ~/tmp" && mkdir -vp "$HOME/tmp" 
 
 target="/tmp/sortfile.XXX"
 orgfile="$(mktemp "$target")" 
 nullfile="$HOME/tmp/deadhosts" 
 
-# Function to validate and clean the network input
 validate_network() {
     local input="$1"
     # Remove trailing dots
     cleaned_network=$(echo "$input" | sed -E 's/\.*$//')
 
-    # Check if the cleaned input is a valid Class C subnet (IPv4 format)
+# Check if the cleaned input is a valid Class C subnet (IPv4 format)
     if [[ "$cleaned_network" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         # Split into octets and check length
         IFS='.' read -r -a octets <<< "$cleaned_network"
@@ -29,12 +32,20 @@ validate_network() {
     fi
 }
 
+if [[ "$1" =~ (-h|--h)$ ]]; then 
+    echo "Perform simple ping sweeps on class C addresses" 
+    echo "Network ID formats: 192.168.1 (or) 192.168.1.0" 
+    exit 0 
+fi
+
 # Main loop for input validation
 while : 
 do
     read -e -r -p "Please enter a valid class C network ID
-Ex: 192.168.1: " networkid
-    valid_network=$(validate_network "$networkid")
+Ex: 192.168.1.0 " val
+networkid="$(echo "$val" | sed 's/.0$//')"
+    
+valid_network=$(validate_network "$networkid")
     if [[ -n "$valid_network" ]]; then  
         break # Valid input, exit the loop
     else 
@@ -62,23 +73,31 @@ do
     fi
 done
 
-echo "cleaning up terminal output..." 
-sleep 1s 
-clear
+#echo "cleaning up terminal output..." 
+#sleep 1s 
+#clear
 wait 
 
 # Function to sort the output
-sortproc() { 
-    sort -n -t . -k 3,3 -k 4,4 "$1"
-}
+sortproc() { sort -n -t . -k 3,3 -k 4,4 "$1"; }
 
 # Output final results
 date >> "$nullfile"
-date | tee -a "$orgfile"
 
 echo "========> Unresponsive hosts <========" 
 sortproc "$nullfile" | uniq 
 
+if [[ -n "$(cat "$orgfile" )" ]]; then 
 echo "========> Responsive hosts <========" 
 sortproc "$orgfile"
+fi
 
+elapsed_seconds=$SECONDS
+formatted_time=$(date -u -d "@$elapsed_seconds" +"%M min, %S seconds")
+{
+    if [[ $elapsed_seconds -ge 60 ]]; then
+        echo "Completed in $formatted_time" 
+    else
+        echo "Completed in $elapsed_seconds seconds. Whoa, that was fast!" 
+    fi
+} | tee -a "$logloc" #remove optionally. If removed, make sure to redact both brackets... 
