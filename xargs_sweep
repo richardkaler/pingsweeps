@@ -1,0 +1,89 @@
+#!/bin/bash
+
+source logloc
+
+trap ctrl_c INT
+ctrl_c() { echo -e "\nABORT! CTRL+C entered..."; exit; }
+
+# Create temporary directory for log files if it doesn't exist
+! [[ -d "$HOME/tmp" ]] && echo "Creating temp directory to store log files at ~/tmp" && mkdir -vp "$HOME/tmp"
+
+target="/tmp/sortfile.XXX"
+orgfile="$(mktemp "$target")"
+nullfile="$HOME/tmp/deadhosts"
+
+# Function to validate network input
+validate_network() {
+    local input="$1"
+    cleaned_network=$(echo "$input" | sed -E 's/\.*$//') # Remove trailing dots
+
+    # Check if the cleaned input is a valid Class C subnet (IPv4 format)
+    if [[ "$cleaned_network" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        IFS='.' read -r -a octets <<< "$cleaned_network"
+        if [[ ${#octets[@]} -eq 3 ]] && [[ ! "${octets[0]}" -gt 255 ]] && [[ ! "${octets[1]}" -gt 255 ]] && [[ ! "${octets[2]}" -ge 256 ]]; then
+            echo "$cleaned_network" # Return the cleaned and valid network ID
+        fi
+    fi
+}
+
+# Display help message
+if [[ "$1" =~ (-h|--h)$ ]]; then
+    echo "Perform simple ping sweeps on class C addresses"
+    echo "Network ID formats: 192.168.1 (or) 192.168.1.0"
+    exit 0
+fi
+
+# Main loop for input validation
+while :
+do
+    read -e -r -p "Please enter a valid class C network ID
+Ex: 192.168.1.0 " val
+    networkid="$(echo "$val" | sed 's/.0$//')"
+    valid_network=$(validate_network "$networkid")
+    if [[ -n "$valid_network" ]]; then
+        break # Valid input, exit the loop
+    else
+        echo "Error! Invalid input - try again." # Notify user of invalid input
+    fi
+done
+
+echo "Validated Network ID: $valid_network"
+
+# Refresh failure log
+echo "Refreshing log file" && true > "$nullfile"
+
+SECONDS=0
+
+# Generate IP range and use xargs for parallel pinging
+
+seq 1 254 | sed "s/^/$valid_network./" | xargs -P 254 -I{} bash -c '
+if ping -c1 -W1 {} &>/dev/null; then
+        echo "{}" | tee -a "'"$orgfile"'"
+    else
+        echo "{}" >> "'"$nullfile"'"
+    fi
+'
+
+# Output final results
+date >> "$nullfile"
+echo "========> Unresponsive hosts <========"
+sort -n -t . -k 3,3 -k 4,4 "$nullfile" | uniq
+
+if [[ -s "$orgfile" ]]; then
+    echo "========> Responsive hosts <========"
+    sort -n -t . -k 3,3 -k 4,4 "$orgfile"
+fi
+
+elapsed_seconds=$SECONDS
+formatted_time=$(date -u -d "@$elapsed_seconds" +"%M min, %S seconds")
+{
+    if [[ $elapsed_seconds -ge 60 ]]; then
+        echo "Completed in $formatted_time"
+    elif [[ $elapsed_seconds -eq 1 ]]; then 
+        echo "Completed in one second. Whoa, that was fast!"
+    else 
+        echo "Completed in $elapsed_seconds seconds. Whoa, that was fast!"
+    fi
+} | tee -a "$logloc"
+
+
