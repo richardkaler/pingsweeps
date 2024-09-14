@@ -1,1 +1,10 @@
-echo 192.168.1.{1..254} | xargs -P254 -d' ' -L1 ping -c1 -w1 2>/dev/null | grep 'bytes from'
+#!/bin/bash
+
+#For the first three octets, make sure you use your proper network ID. Remember from networking class: if a class C subnet is used, the host bits are
+#on the last octet or decminal value. You might deal with a plethora of VLANs and subnets but this is a basic one liner that addresses
+#more common network schemes on your average LAN.
+
+#Unsure of what your network ID is? Try this: 
+#ifconfig | grep 192.168
+
+echo 192.168.1.{1..254} | xargs -P254 -d' ' -L1 ping -c1 -w1 2>/dev/null | grep 'bytes from' | sort -V 
